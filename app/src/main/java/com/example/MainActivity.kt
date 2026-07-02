@@ -53,10 +53,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = Color(0xFF0F172A) // Gorgeous deep space slate background
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    LiquidGlassBackground()
+                    
                     Scaffold(
                         modifier = Modifier.fillMaxSize(),
                         containerColor = Color.Transparent,
@@ -66,12 +65,12 @@ class MainActivity : ComponentActivity() {
                                     .fillMaxWidth()
                                     .statusBarsPadding()
                                     .height(64.dp)
-                                    .background(Color(0x330F172A)),
+                                    .background(Color(0x1F000000)), // subtle frosted top bar
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     "FLOATING CAMERA",
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontWeight = FontWeight.Black,
                                     letterSpacing = 2.sp,
                                     fontSize = 20.sp,
                                     color = Color.White
@@ -266,15 +265,21 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
 
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1E293B)
+                    containerColor = Color(0x1F1E293B) // Frosted glass dark translucency
                 ),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(28.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(
-                        1.dp,
-                        if (isServiceRunning) Color(0xFF10B981) else Color(0xFF64748B),
-                        RoundedCornerShape(24.dp)
+                        width = 1.dp,
+                        brush = Brush.linearGradient(
+                            colors = if (isServiceRunning) {
+                                listOf(Color(0xFF30D158), Color(0x1F30D158)) // iOS Green glowing border
+                            } else {
+                                listOf(Color(0x33FFFFFF), Color(0x05FFFFFF)) // White frosted glowing border
+                            }
+                        ),
+                        shape = RoundedCornerShape(28.dp)
                     )
             ) {
                 Column(
@@ -292,7 +297,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                                 .size(12.dp)
                                 .scale(if (isServiceRunning) pulseScale else 1.0f)
                                 .background(
-                                    if (isServiceRunning) Color(0xFF10B981) else Color(0xFF94A3B8),
+                                    if (isServiceRunning) Color(0xFF30D158) else Color(0x8CFFFFFF),
                                     CircleShape
                                 )
                         )
@@ -301,7 +306,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                             fontWeight = FontWeight.Black,
                             fontSize = 12.sp,
                             letterSpacing = 1.sp,
-                            color = if (isServiceRunning) Color(0xFF10B981) else Color(0xFF94A3B8)
+                            color = if (isServiceRunning) Color(0xFF30D158) else Color(0x8CFFFFFF)
                         )
                     }
 
@@ -311,7 +316,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                         } else {
                             "Ready to start. Tap the button below to project your camera onto a floating draggable bubble!"
                         },
-                        color = Color(0xFF94A3B8),
+                        color = Color(0xBFEEEEEE),
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 8.dp)
@@ -330,7 +335,9 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                                 isServiceRunning = false
                                 OverlayState.isServiceRunning = false
                             } else {
-                                // Start Service
+                                // Start Service in default transparent cutout mode
+                                OverlayState.backgroundMode = BackgroundMode.TRANSPARENT
+                                backgroundMode = BackgroundMode.TRANSPARENT
                                 val intent = Intent(context, CameraOverlayService::class.java)
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                     context.startForegroundService(intent)
@@ -343,12 +350,12 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                             OverlayState.notifyChanged(context)
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isServiceRunning) Color(0xFFEF4444) else Color(0xFF0EA5E9)
+                            containerColor = if (isServiceRunning) Color(0xFFFF453A) else Color(0xFF0A84FF) // iOS Red / iOS Blue
                         ),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(28.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
+                            .height(58.dp)
                             .testTag("service_toggle_button")
                     ) {
                         Row(
@@ -377,7 +384,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp,
-                color = Color(0xFF38BDF8),
+                color = Color(0xFF0A84FF), // iOS Premium Blue
                 modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
             )
         }
@@ -424,7 +431,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp,
-                color = Color(0xFF38BDF8),
+                color = Color(0xFF0A84FF), // iOS Premium Blue
                 modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
             )
         }
@@ -433,10 +440,16 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
         item {
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1E293B)
+                    containerColor = Color(0x1F1E293B) // Frosted glass dark translucency
                 ),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 1.dp,
+                        brush = Brush.linearGradient(listOf(Color(0x33FFFFFF), Color(0x05FFFFFF))),
+                        shape = RoundedCornerShape(24.dp)
+                    )
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -611,7 +624,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.5.sp,
-                color = Color(0xFF38BDF8),
+                color = Color(0xFF0A84FF), // iOS Premium Blue
                 modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
             )
         }
@@ -619,10 +632,16 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
         item {
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1E293B)
+                    containerColor = Color(0x1F1E293B) // Frosted glass dark translucency
                 ),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 1.dp,
+                        brush = Brush.linearGradient(listOf(Color(0x33FFFFFF), Color(0x05FFFFFF))),
+                        shape = RoundedCornerShape(24.dp)
+                    )
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -642,7 +661,7 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                         Text(
                             "${(opacity * 100).toInt()}%",
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF10B981),
+                            color = Color(0xFF30D158), // iOS System Green
                             fontSize = 14.sp
                         )
                     }
@@ -657,9 +676,9 @@ fun DashboardScreen(modifier: Modifier = Modifier) {
                         valueRange = 0.10f..1.0f,
                         steps = 18,
                         colors = SliderDefaults.colors(
-                            thumbColor = Color(0xFF10B981),
-                            activeTrackColor = Color(0xFF10B981),
-                            inactiveTrackColor = Color(0x33FFFFFF)
+                            thumbColor = Color(0xFF30D158), // iOS System Green
+                            activeTrackColor = Color(0xFF30D158),
+                            inactiveTrackColor = Color(0x22FFFFFF)
                         )
                     )
 
@@ -727,14 +746,18 @@ fun OptionCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) Color(0xFF1E293B) else Color(0x11FFFFFF)
+            containerColor = if (isSelected) Color(0x1F0A84FF) else Color(0x0AFFFFFF) // Frosted Blue or Frosted White
         ),
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .border(
-                1.dp,
-                if (isSelected) Color(0xFF0EA5E9) else Color.Transparent,
-                RoundedCornerShape(16.dp)
+                width = 1.dp,
+                brush = if (isSelected) {
+                    Brush.linearGradient(listOf(Color(0xFF0A84FF), Color(0x330A84FF)))
+                } else {
+                    Brush.linearGradient(listOf(Color(0x22FFFFFF), Color(0x05FFFFFF)))
+                },
+                shape = RoundedCornerShape(20.dp)
             )
             .clickable(onClick = onClick)
     ) {
@@ -745,9 +768,9 @@ fun OptionCard(
             Icon(
                 icon,
                 contentDescription = null,
-                tint = if (isSelected) Color(0xFF0EA5E9) else Color(0xFF94A3B8)
+                tint = if (isSelected) Color(0xFF0A84FF) else Color(0xFF8E8E93)
             )
-            Text(title, fontSize = 11.sp, color = Color(0xFF94A3B8))
+            Text(title, fontSize = 11.sp, color = Color(0xFF8E8E93))
             Text(valueText, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
         }
     }
@@ -764,15 +787,19 @@ fun BackgroundModeRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (isSelected) Color(0x110EA5E9) else Color(0x05FFFFFF))
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (isSelected) Color(0x120A84FF) else Color(0x05FFFFFF))
             .border(
-                1.dp,
-                if (isSelected) Color(0xFF0EA5E9) else Color(0x0AFFFFFF),
-                RoundedCornerShape(12.dp)
+                width = 1.dp,
+                brush = if (isSelected) {
+                    Brush.linearGradient(listOf(Color(0xFF0A84FF), Color(0x1A0A84FF)))
+                } else {
+                    Brush.linearGradient(listOf(Color(0x15FFFFFF), Color(0x03FFFFFF)))
+                },
+                shape = RoundedCornerShape(18.dp)
             )
             .clickable(onClick = onClick)
-            .padding(12.dp),
+            .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -780,8 +807,8 @@ fun BackgroundModeRow(
             selected = isSelected,
             onClick = onClick,
             colors = RadioButtonDefaults.colors(
-                selectedColor = Color(0xFF0EA5E9),
-                unselectedColor = Color(0x55FFFFFF)
+                selectedColor = Color(0xFF0A84FF),
+                unselectedColor = Color(0x33FFFFFF)
             )
         )
 
@@ -790,13 +817,67 @@ fun BackgroundModeRow(
                 title,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
-                color = if (isSelected) Color.White else Color(0xFF94A3B8)
+                color = if (isSelected) Color.White else Color(0xFFE2E8F0)
             )
             Text(
                 desc,
                 fontSize = 11.sp,
-                color = if (isSelected) Color(0xFF38BDF8) else Color(0xFF64748B)
+                color = if (isSelected) Color(0xBF0A84FF) else Color(0xFF94A3B8)
             )
         }
+    }
+}
+
+@Composable
+fun LiquidGlassBackground() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF070B19)) // Deepest space black/slate
+    ) {
+        // Blob 1: iOS Neon Pink/Red glow in top-right
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(450.dp)
+                .align(Alignment.TopEnd)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x2BFF2D55), Color(0x00FF2D55)),
+                        radius = 1000f
+                    )
+                )
+        )
+        // Blob 2: iOS Neon Blue/Cyan glow in bottom-left
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(500.dp)
+                .align(Alignment.BottomStart)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x221AD6FF), Color(0x001AD6FF)),
+                        radius = 1100f
+                    )
+                )
+        )
+        // Blob 3: Purple/Violet ambient center glow
+        Box(
+            modifier = Modifier
+                .size(380.dp)
+                .align(Alignment.Center)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x1EA855F7), Color(0x00A855F7)),
+                        radius = 800f
+                    )
+                )
+        )
+        // Tinted overlay for extra frosted aesthetic depth
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x0A000000))
+        )
     }
 }

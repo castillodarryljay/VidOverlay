@@ -16,6 +16,8 @@ import android.view.*
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Button
 import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -59,12 +61,326 @@ class CameraOverlayService : Service(), LifecycleOwner {
     private val CHANNEL_ID = "camera_overlay_service_channel"
 
     private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var minimizeDialog: android.app.AlertDialog? = null
+
+    private val minimizePopupRunnable = Runnable {
+        showMinimizePopup()
+    }
+
     private val openAppRunnable = Runnable {
         val launchIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(launchIntent)
         Toast.makeText(this, "Opening App", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showMinimizePopup() {
+        minimizeDialog?.dismiss()
+
+        val context = this
+        val builder = android.app.AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+
+        val density = context.resources.displayMetrics.density
+        val dpToPx = { dp: Int -> (dp * density).toInt() }
+
+        // ScrollView container to handle potential height overflow gracefully on small screens
+        val scrollView = android.widget.ScrollView(context).apply {
+            isFillViewport = true
+        }
+
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dpToPx(24), dpToPx(24), dpToPx(24), dpToPx(24))
+            
+            // Premium dark frosted glass background with subtle stroke
+            val gd = GradientDrawable().apply {
+                setColor(0xEE0B0F19.toInt()) // Deepest dark frosted glass slate
+                cornerRadius = 32f * density // Beautiful iOS rounded corners
+                setStroke((1.5f * density).toInt(), 0x33FFFFFF) // Refined glowing outline
+            }
+            background = gd
+        }
+        scrollView.addView(layout)
+
+        // Title text
+        val titleView = TextView(context).apply {
+            text = "OVERLAY SETTINGS"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dpToPx(16))
+        }
+        layout.addView(titleView)
+
+        // Helper for Section Labels
+        fun addSectionLabel(textStr: String) {
+            val label = TextView(context).apply {
+                text = textStr
+                textSize = 12f
+                setTextColor(0xFF38BDF8.toInt()) // Vibrant neon blue
+                setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
+                setPadding(0, dpToPx(12), 0, dpToPx(6))
+            }
+            layout.addView(label)
+        }
+
+        // 1. Background Mode Section
+        addSectionLabel("CUTOUT MODE / BACKGROUND")
+
+        val modeContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val horizontalScroll = android.widget.HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(modeContainer)
+        }
+        layout.addView(horizontalScroll)
+
+        val modes = listOf(
+            BackgroundMode.NONE to "Original",
+            BackgroundMode.TRANSPARENT to "Cutout",
+            BackgroundMode.BLUR to "Blur",
+            BackgroundMode.COLOR to "Solid",
+            BackgroundMode.IMAGE to "Image"
+        )
+
+        val modeButtons = mutableListOf<Button>()
+
+        fun updateModeButtonStyles() {
+            for (i in modes.indices) {
+                val (mode, _) = modes[i]
+                val btn = modeButtons[i]
+                val isActive = OverlayState.backgroundMode == mode
+                
+                val btnBg = GradientDrawable().apply {
+                    if (isActive) {
+                        setColor(0x440A84FF.toInt()) // Frosted Blue
+                        cornerRadius = 16f * density
+                        setStroke((1.5f * density).toInt(), 0xFF0A84FF.toInt())
+                    } else {
+                        setColor(0x11FFFFFF.toInt()) // Frosted White
+                        cornerRadius = 16f * density
+                        setStroke((1f * density).toInt(), 0x33FFFFFF)
+                    }
+                }
+                btn.background = btnBg
+                btn.setTextColor(if (isActive) Color.WHITE else 0xFF94A3B8.toInt())
+            }
+        }
+
+        for (pair in modes) {
+            val (mode, labelText) = pair
+            val btn = Button(context).apply {
+                text = labelText
+                textSize = 12f
+                isAllCaps = false
+                setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
+                
+                setOnClickListener {
+                    OverlayState.backgroundMode = mode
+                    OverlayState.notifyChanged(context)
+                    updateModeButtonStyles()
+                }
+            }
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dpToPx(38)
+            ).apply {
+                setMargins(0, 0, dpToPx(8), 0)
+            }
+            modeContainer.addView(btn, params)
+            modeButtons.add(btn)
+        }
+        updateModeButtonStyles()
+
+        // 2. Opacity Section
+        addSectionLabel("OPACITY")
+        val opacityLabel = TextView(context).apply {
+            text = "Level: ${(OverlayState.opacity * 100).toInt()}%"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dpToPx(4))
+        }
+        layout.addView(opacityLabel)
+
+        val opacitySeekBar = android.widget.SeekBar(context).apply {
+            max = 90 // 10% to 100%
+            progress = ((OverlayState.opacity - 0.1f) * 100).toInt()
+            
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                    val newOpacity = 0.1f + (progress / 100f)
+                    OverlayState.opacity = newOpacity
+                    opacityLabel.text = "Level: ${(newOpacity * 100).toInt()}%"
+                    OverlayState.notifyChanged(context)
+                }
+                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            })
+        }
+        layout.addView(opacitySeekBar)
+
+        // 3. Size / Scale Section
+        addSectionLabel("OVERLAY SIZE")
+        val sizeLabel = TextView(context).apply {
+            text = "Scale: ${(OverlayState.scaleFactor * 100).toInt()}%"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dpToPx(4))
+        }
+        layout.addView(sizeLabel)
+
+        val sizeSeekBar = android.widget.SeekBar(context).apply {
+            max = 130 // 20% to 150%
+            progress = ((OverlayState.scaleFactor - 0.2f) * 100).toInt()
+            
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                    val newScale = 0.2f + (progress / 100f)
+                    OverlayState.scaleFactor = newScale
+                    sizeLabel.text = "Scale: ${(newScale * 100).toInt()}%"
+                    OverlayState.notifyChanged(context)
+                }
+                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            })
+        }
+        layout.addView(sizeSeekBar)
+
+        // 4. Camera Selection Section
+        addSectionLabel("CAMERA")
+        val cameraToggleBtn = Button(context).apply {
+            text = if (OverlayState.isFrontCamera) "Switch to Back Camera" else "Switch to Front Camera"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            isAllCaps = false
+            
+            val btnBg = GradientDrawable().apply {
+                setColor(0x22FFFFFF)
+                cornerRadius = 14f * density
+                setStroke((1f * density).toInt(), 0x44FFFFFF)
+            }
+            background = btnBg
+            setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
+            
+            setOnClickListener {
+                OverlayState.isFrontCamera = !OverlayState.isFrontCamera
+                text = if (OverlayState.isFrontCamera) "Switch to Back Camera" else "Switch to Front Camera"
+                
+                // Re-bind camera immediately
+                try {
+                    bindCamera()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                OverlayState.notifyChanged(context)
+            }
+        }
+        val cameraBtnParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, dpToPx(16))
+        }
+        layout.addView(cameraToggleBtn, cameraBtnParams)
+
+        // Divider
+        val divider = View(context).apply {
+            setBackgroundColor(0x22FFFFFF)
+        }
+        val divParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            (1f * density).toInt()
+        ).apply {
+            setMargins(0, dpToPx(12), 0, dpToPx(16))
+        }
+        layout.addView(divider, divParams)
+
+        // Bottom Actions layout
+        val actionsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val actionBtnParams = LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f
+        ).apply {
+            setMargins(0, 0, dpToPx(8), 0)
+        }
+
+        // Stop Service button
+        val stopBtn = Button(context).apply {
+            text = "Stop Overlay"
+            textSize = 13f
+            setTextColor(0xFFEF4444.toInt()) // Neon Premium Red
+            isAllCaps = false
+            
+            val btnBg = GradientDrawable().apply {
+                setColor(0x1AEF4444.toInt())
+                cornerRadius = 14f * density
+                setStroke((1f * density).toInt(), 0x33EF4444.toInt())
+            }
+            background = btnBg
+            
+            setOnClickListener {
+                stopSelf()
+                OverlayState.isServiceRunning = false
+                OverlayState.notifyChanged(context)
+                minimizeDialog?.dismiss()
+            }
+        }
+        actionsContainer.addView(stopBtn, actionBtnParams)
+
+        // Done button
+        val doneBtn = Button(context).apply {
+            text = "Done"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            isAllCaps = false
+            
+            val btnBg = GradientDrawable().apply {
+                setColor(0xFF0A84FF.toInt()) // iOS Premium Blue
+                cornerRadius = 14f * density
+            }
+            background = btnBg
+            
+            setOnClickListener {
+                minimizeDialog?.dismiss()
+            }
+        }
+        val doneBtnParams = LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f
+        ).apply {
+            setMargins(dpToPx(8), 0, 0, 0)
+        }
+        actionsContainer.addView(doneBtn, doneBtnParams)
+
+        layout.addView(actionsContainer, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        builder.setView(scrollView)
+        val dialog = builder.create()
+        dialog.setCanceledOnTouchOutside(true)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        } else {
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT)
+        }
+        
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+        
+        minimizeDialog = dialog
+        dialog.show()
     }
 
     override fun onCreate() {
@@ -233,9 +549,11 @@ class CameraOverlayService : Service(), LifecycleOwner {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
 
-                    // Handle protective 3-second Long Press to open the app safely without accidental gesture launches
+                    // Handle 3-second long press for Minimize Options, and 5-second long press to Open App
+                    longPressHandler.removeCallbacks(minimizePopupRunnable)
                     longPressHandler.removeCallbacks(openAppRunnable)
-                    longPressHandler.postDelayed(openAppRunnable, 3000L)
+                    longPressHandler.postDelayed(minimizePopupRunnable, 3000L)
+                    longPressHandler.postDelayed(openAppRunnable, 5000L)
 
                     // Double Tap to toggle landscape/portrait orientation and reset physical rotation
                     val currentTime = System.currentTimeMillis()
@@ -257,14 +575,16 @@ class CameraOverlayService : Service(), LifecycleOwner {
                         initialHeight = windowParams.height
                         initialRotation = overlayView.rotation
 
-                        // Cancel accidental launch on multi-touch
+                        // Cancel accidental launches on multi-touch
+                        longPressHandler.removeCallbacks(minimizePopupRunnable)
                         longPressHandler.removeCallbacks(openAppRunnable)
                     }
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    // If finger moves significantly, cancel long press (they are dragging or pinching, not pressing statically)
+                    // If finger moves significantly, cancel long press
                     val moveDist = Math.hypot((event.rawX - initialTouchX).toDouble(), (event.rawY - initialTouchY).toDouble())
                     if (moveDist > 15) {
+                        longPressHandler.removeCallbacks(minimizePopupRunnable)
                         longPressHandler.removeCallbacks(openAppRunnable)
                     }
 
@@ -311,6 +631,7 @@ class CameraOverlayService : Service(), LifecycleOwner {
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                    longPressHandler.removeCallbacks(minimizePopupRunnable)
                     longPressHandler.removeCallbacks(openAppRunnable)
                     touchMode = 0
                 }

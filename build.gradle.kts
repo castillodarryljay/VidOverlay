@@ -7,3 +7,13 @@ plugins {
   alias(libs.plugins.secrets) apply false
   alias(libs.plugins.google.services) apply false
 }
+
+tasks.register<Delete>("cleanApk") {
+  delete("app-debug.apk")
+}
+
+tasks.register<Copy>("copyApk") {
+  dependsOn("cleanApk")
+  from("app/build/outputs/apk/debug/app-debug.apk")
+  into(rootDir)
+}

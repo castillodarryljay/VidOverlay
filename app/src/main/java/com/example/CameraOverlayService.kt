@@ -49,6 +49,12 @@ class CameraOverlayService : Service(), LifecycleOwner {
     private var cameraProvider: ProcessCameraProvider? = null
     private var segmenter: Segmenter? = null
 
+    private var lastWidth = 0
+    private var lastHeight = 0
+
+    private val analysisExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val isProcessingFrame = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val NOTIFICATION_ID = 8821
     private val CHANNEL_ID = "camera_overlay_service_channel"
 
@@ -72,7 +78,6 @@ class CameraOverlayService : Service(), LifecycleOwner {
         // Initialize ML Kit Selfie Segmenter
         val options = SelfieSegmenterOptions.Builder()
             .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
-            .enableRawSizeMask() // Extremely fast on-device raw size processing
             .build()
         segmenter = Segmentation.getClient(options)
 
@@ -156,9 +161,14 @@ class CameraOverlayService : Service(), LifecycleOwner {
         val baseHeight = if (OverlayState.isPortrait) 640 else 360
         val scale = OverlayState.scaleFactor
 
+        val startWidth = (baseWidth * scale).toInt()
+        val startHeight = (baseHeight * scale).toInt()
+        lastWidth = startWidth
+        lastHeight = startHeight
+
         windowParams = WindowManager.LayoutParams(
-            (baseWidth * scale).toInt(),
-            (baseHeight * scale).toInt(),
+            startWidth,
+            startHeight,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
@@ -212,6 +222,7 @@ class CameraOverlayService : Service(), LifecycleOwner {
         var initialTouchX = 0f
         var initialTouchY = 0f
         var lastTapTime = 0L
+        var initialRotation = 0f
 
         overlayView.setOnTouchListener { _, event ->
             when (event.action and MotionEvent.ACTION_MASK) {
@@ -226,12 +237,13 @@ class CameraOverlayService : Service(), LifecycleOwner {
                     longPressHandler.removeCallbacks(openAppRunnable)
                     longPressHandler.postDelayed(openAppRunnable, 3000L)
 
-                    // Double Tap to toggle landscape/portrait orientation
+                    // Double Tap to toggle landscape/portrait orientation and reset physical rotation
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastTapTime < 300L) {
                         OverlayState.isPortrait = !OverlayState.isPortrait
+                        overlayView.rotation = 0f
                         OverlayState.notifyChanged(this@CameraOverlayService)
-                        Toast.makeText(this@CameraOverlayService, "Rotated Screen Aspect", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@CameraOverlayService, "Reset Rotation & Swapped Aspect", Toast.LENGTH_SHORT).show()
                     }
                     lastTapTime = currentTime
                 }
@@ -243,6 +255,7 @@ class CameraOverlayService : Service(), LifecycleOwner {
                         oldRotation = rotation(event)
                         initialWidth = windowParams.width
                         initialHeight = windowParams.height
+                        initialRotation = overlayView.rotation
 
                         // Cancel accidental launch on multi-touch
                         longPressHandler.removeCallbacks(openAppRunnable)
@@ -281,14 +294,19 @@ class CameraOverlayService : Service(), LifecycleOwner {
                             windowManager.updateViewLayout(overlayView, windowParams)
                         }
 
-                        // Rotating fingers by more than 60 degrees flips orientation as well!
-                        val newRotation = rotation(event)
-                        val angleDiff = newRotation - oldRotation
-                        if (Math.abs(angleDiff) > 60f) {
-                            OverlayState.isPortrait = !OverlayState.isPortrait
-                            OverlayState.notifyChanged(this@CameraOverlayService)
-                            oldRotation = newRotation
-                            touchMode = 1 // transition back to default
+                        // Continuous physical/literal rotation around center (only allowed for segmented/background-removed states)
+                        if (OverlayState.backgroundMode != BackgroundMode.NONE) {
+                            val newRotation = rotation(event)
+                            var angleDiff = newRotation - oldRotation
+                            // Normalize to prevent jumps at -180/180 degrees
+                            if (angleDiff > 180f) {
+                                angleDiff -= 360f
+                            } else if (angleDiff < -180f) {
+                                angleDiff += 360f
+                            }
+                            overlayView.rotation = (initialRotation + angleDiff)
+                        } else {
+                            overlayView.rotation = 0f
                         }
                     }
                 }
@@ -333,6 +351,7 @@ class CameraOverlayService : Service(), LifecycleOwner {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
     private fun bindCamera() {
         val provider = cameraProvider ?: return
 
@@ -364,7 +383,7 @@ class CameraOverlayService : Service(), LifecycleOwner {
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
 
-        imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(this)) { imageProxy ->
+        imageAnalysis.setAnalyzer(analysisExecutor) { imageProxy ->
             if (OverlayState.backgroundMode == BackgroundMode.NONE) {
                 // Background removal is off, display native PreviewView
                 previewView.post {
@@ -372,28 +391,35 @@ class CameraOverlayService : Service(), LifecycleOwner {
                     segmentedImageView.visibility = View.GONE
                 }
                 imageProxy.close()
+                return@setAnalyzer
+            }
+
+            // Frame skipping logic: if we are already processing a frame, skip this one
+            if (!isProcessingFrame.compareAndSet(false, true)) {
+                imageProxy.close()
+                return@setAnalyzer
+            }
+
+            // Background removal active, analyze and draw to Custom ImageView
+            previewView.post {
+                previewView.visibility = View.GONE
+                segmentedImageView.visibility = View.VISIBLE
+            }
+
+            val mediaImage = imageProxy.image
+            if (mediaImage != null) {
+                val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                segmenter?.process(inputImage)
+                    ?.addOnSuccessListener(analysisExecutor) { mask ->
+                        renderSegmentedFrame(imageProxy, mask)
+                    }
+                    ?.addOnFailureListener(analysisExecutor) {
+                        imageProxy.close()
+                        isProcessingFrame.set(false)
+                    }
             } else {
-                // Background removal active, analyze and draw to Custom ImageView
-                previewView.post {
-                    previewView.visibility = View.GONE
-                    segmentedImageView.visibility = View.VISIBLE
-                }
-                val mediaImage = imageProxy.image
-                if (mediaImage != null) {
-                    val inputImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                    segmenter?.process(inputImage)
-                        ?.addOnSuccessListener { mask ->
-                            renderSegmentedFrame(imageProxy, mask)
-                        }
-                        ?.addOnFailureListener {
-                            imageProxy.close()
-                        }
-                        ?.addOnCompleteListener {
-                            // ImageProxy closed inside success/failure or here
-                        }
-                } else {
-                    imageProxy.close()
-                }
+                imageProxy.close()
+                isProcessingFrame.set(false)
             }
         }
 
@@ -417,8 +443,22 @@ class CameraOverlayService : Service(), LifecycleOwner {
         try {
             // 1. Get raw Bitmap from frame (which is in YUV_420_888, converted cleanly by CameraX)
             val rawBitmap = imageProxy.toBitmap()
+            val rotation = imageProxy.imageInfo.rotationDegrees
 
-            // 2. Process ML Mask into white-gray alpha Map Bitmap (aligned with raw image)
+            // Rotate the raw bitmap first to match the actual display/upright orientation
+            val rotatedRawBitmap = if (rotation != 0) {
+                val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                val rotated = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                rawBitmap.recycle()
+                rotated
+            } else {
+                rawBitmap
+            }
+
+            val RW = rotatedRawBitmap.width
+            val RH = rotatedRawBitmap.height
+
+            // 2. Process ML Mask into white-gray alpha Map Bitmap (aligned with rotated raw image)
             val maskWidth = mask.width
             val maskHeight = mask.height
             val maskBuffer = mask.buffer
@@ -435,71 +475,74 @@ class CameraOverlayService : Service(), LifecycleOwner {
             val maskBitmap = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ARGB_8888)
             maskBitmap.setPixels(maskPixels, 0, maskWidth, 0, 0, maskWidth, maskHeight)
 
-            // 3. Composite output canvas matching rawBitmap sizes
-            val compositedRawBitmap = Bitmap.createBitmap(rawBitmap.width, rawBitmap.height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(compositedRawBitmap)
+            // 3. Composite output canvas matching the final rotated/upright sizes
+            val compositedBitmap = Bitmap.createBitmap(RW, RH, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(compositedBitmap)
 
-            // A: Draw the chosen background state on the raw canvas size
+            // A: Draw the chosen background state on the rotated canvas size
             when (OverlayState.backgroundMode) {
                 BackgroundMode.COLOR -> {
                     canvas.drawColor(OverlayState.backgroundColor)
                 }
                 BackgroundMode.BLUR -> {
-                    // Hyper-efficient native box blur on rawBitmap
+                    // Hyper-efficient native box blur on rotatedRawBitmap
                     val scaleDownFactor = 0.12f
-                    val w = (rawBitmap.width * scaleDownFactor).toInt().coerceAtLeast(1)
-                    val h = (rawBitmap.height * scaleDownFactor).toInt().coerceAtLeast(1)
-                    val smallBmp = Bitmap.createScaledBitmap(rawBitmap, w, h, true)
-                    val blurredBmp = Bitmap.createScaledBitmap(smallBmp, rawBitmap.width, rawBitmap.height, true)
+                    val w = (rotatedRawBitmap.width * scaleDownFactor).toInt().coerceAtLeast(1)
+                    val h = (rotatedRawBitmap.height * scaleDownFactor).toInt().coerceAtLeast(1)
+                    val smallBmp = Bitmap.createScaledBitmap(rotatedRawBitmap, w, h, true)
+                    val blurredBmp = Bitmap.createScaledBitmap(smallBmp, rotatedRawBitmap.width, rotatedRawBitmap.height, true)
                     canvas.drawBitmap(blurredBmp, 0f, 0f, null)
                     smallBmp.recycle()
                     blurredBmp.recycle()
                 }
                 BackgroundMode.IMAGE -> {
-                    drawStudioBackground(canvas, rawBitmap.width, rawBitmap.height, OverlayState.bgImageIndex)
+                    drawStudioBackground(canvas, RW, RH, OverlayState.bgImageIndex)
                 }
                 else -> {
                     // Fully transparent, do not draw background layer
                 }
             }
 
-            // B: Mask and draw foreground portrait (DST_IN layer masking)
+            // B: Mask and draw foreground portrait (DST_IN layer masking directly in rotated upright space)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-            val saveCount = canvas.saveLayer(0f, 0f, rawBitmap.width.toFloat(), rawBitmap.height.toFloat(), null)
-            canvas.drawBitmap(rawBitmap, 0f, 0f, paint)
+            val saveCount = canvas.saveLayer(0f, 0f, RW.toFloat(), RH.toFloat(), null)
+            canvas.drawBitmap(rotatedRawBitmap, 0f, 0f, paint)
             paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-            canvas.drawBitmap(maskBitmap, null, Rect(0, 0, rawBitmap.width, rawBitmap.height), paint)
+            canvas.drawBitmap(maskBitmap, null, Rect(0, 0, RW, RH), paint)
             paint.xfermode = null
             canvas.restoreToCount(saveCount)
 
-            // 4. Rotate and Mirror the final composited frame to match standard orientation
-            val rotation = imageProxy.imageInfo.rotationDegrees
-            val matrix = Matrix().apply {
-                if (rotation != 0) {
-                    postRotate(rotation.toFloat())
-                }
-                if (OverlayState.isFrontCamera) {
+            // 4. Mirror the final composited frame if front camera is active to match standard orientation
+            val finalBitmap = if (OverlayState.isFrontCamera) {
+                val matrix = Matrix().apply {
                     postScale(-1f, 1f)
                 }
+                val mirrored = Bitmap.createBitmap(
+                    compositedBitmap, 0, 0, compositedBitmap.width, compositedBitmap.height, matrix, true
+                )
+                if (mirrored !== compositedBitmap) {
+                    compositedBitmap.recycle()
+                }
+                mirrored
+            } else {
+                compositedBitmap
             }
 
-            val finalBitmap = Bitmap.createBitmap(
-                compositedRawBitmap, 0, 0, compositedRawBitmap.width, compositedRawBitmap.height, matrix, true
-            )
-
-            // 5. Update floating window on the UI Thread
+            // 5. Update floating window on the UI Thread and recycle previous frame to avoid GC lag
             segmentedImageView.post {
+                val oldBitmap = (segmentedImageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
                 segmentedImageView.setImageBitmap(finalBitmap)
+                oldBitmap?.recycle()
             }
 
             // Memory cleanup to avoid OutOfMemoryError
-            rawBitmap.recycle()
+            rotatedRawBitmap.recycle()
             maskBitmap.recycle()
-            compositedRawBitmap.recycle()
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
             imageProxy.close() // Close imageProxy safely in all scenarios
+            isProcessingFrame.set(false)
         }
     }
 
@@ -546,14 +589,27 @@ class CameraOverlayService : Service(), LifecycleOwner {
         val baseHeight = if (isPortrait) 640 else 360
         val scale = OverlayState.scaleFactor
 
-        windowParams.width = (baseWidth * scale).toInt()
-        windowParams.height = (baseHeight * scale).toInt()
-        windowParams.alpha = OverlayState.opacity
+        val targetWidth = (baseWidth * scale).toInt()
+        val targetHeight = (baseHeight * scale).toInt()
 
-        try {
-            windowManager.updateViewLayout(overlayView, windowParams)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        // Apply hardware-accelerated alpha directly to the view for ultra-smooth real-time rendering
+        overlayView.alpha = OverlayState.opacity
+
+        if (OverlayState.backgroundMode == BackgroundMode.NONE) {
+            overlayView.rotation = 0f
+        }
+
+        // Only invoke heavy WindowManager updates if the actual dimensions changed
+        if (targetWidth != lastWidth || targetHeight != lastHeight) {
+            lastWidth = targetWidth
+            lastHeight = targetHeight
+            windowParams.width = targetWidth
+            windowParams.height = targetHeight
+            try {
+                windowManager.updateViewLayout(overlayView, windowParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 

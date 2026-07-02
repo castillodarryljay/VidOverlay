@@ -13,6 +13,7 @@ class CameraOverlayTileService : TileService() {
         updateTileState()
     }
 
+    @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         super.onClick()
         // Shortcut to launch the application when clicked.

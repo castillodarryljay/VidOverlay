@@ -1,5 +1,5 @@
 {
-  "name": "Floating Camera Overlay",
+  "name": "FaceStream",
   "description": "Floating Camera Overlay lets you access your camera and display a draggable, resizable video feed overlay over other apps, with options for portrait/landscape orientation and real-time background removal.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

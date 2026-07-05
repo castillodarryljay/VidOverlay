@@ -101,7 +101,7 @@ class CameraOverlayTileService : TileService() {
         val tile = qsTile ?: return
         val isRunning = OverlayState.isServiceRunning
         tile.state = if (isRunning) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        tile.label = "Floating Camera"
+        tile.label = "FaceStream"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             tile.subtitle = if (isRunning) "Active (Cutout)" else "Tap to launch"
         }

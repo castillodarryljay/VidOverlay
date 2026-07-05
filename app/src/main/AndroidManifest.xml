@@ -38,8 +38,8 @@
 
         <service
             android:name=".CameraOverlayTileService"
-            android:icon="@drawable/ic_launcher_foreground"
-            android:label="Floating Camera"
+            android:icon="@drawable/ic_tile_person"
+            android:label="FaceStream"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:exported="true">
             <intent-filter>
